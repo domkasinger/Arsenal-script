@@ -1,0 +1,145 @@
+--// Configuration
+local Config = {
+    Aimbot = {
+        Enabled = true,
+        Snap = true, -- Instant 0-smooth lock
+        SilentAim = true,
+        FOV = 200,
+        TargetPart = "Head",
+        TeamCheck = true,
+        WallCheck = true
+    },
+    Visuals = {
+        Enabled = true,
+        Box = true,
+        Health = true,
+        Distance = true,
+        Name = true,
+        Color = Color3.fromRGB(0, 255, 255),
+        Transparency = 0.5 -- Blanted/Faded look
+    }
+}
+
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local Camera = workspace.CurrentCamera
+local LocalPlayer = Players.LocalPlayer
+
+--// Optimized FOV Circle
+local Gui = Instance.new("ScreenGui", game:GetService("CoreGui"))
+local FOV = Instance.new("Frame", Gui)
+FOV.Size = UDim2.new(0, Config.Aimbot.FOV * 2, 0, Config.Aimbot.FOV * 2)
+FOV.AnchorPoint = Vector2.new(0.5, 0.5)
+FOV.Position = UDim2.new(0.5, 0, 0.5, 0)
+FOV.BackgroundTransparency = 1
+local Stroke = Instance.new("UIStroke", FOV)
+Stroke.Thickness = 1.5
+Stroke.Color = Config.Visuals.Color
+Stroke.Transparency = Config.Visuals.Transparency
+Instance.new("UICorner", FOV).CornerRadius = UDim.new(1, 0)
+
+--// High-Speed Target Logic
+local function GetTarget()
+    local Target, Closest = nil, Config.Aimbot.FOV
+    local Center = Vector2.new(Camera.ViewportSize.X/2, Camera.ViewportSize.Y/2)
+
+    for _, v in pairs(Players:GetPlayers()) do
+        if v ~= LocalPlayer and v.Character and v.Character:FindFirstChild(Config.Aimbot.TargetPart) then
+            if Config.Aimbot.TeamCheck and v.Team == LocalPlayer.Team then continue end
+            
+            local Hum = v.Character:FindFirstChildOfClass("Humanoid")
+            if Hum and Hum.Health > 0 then
+                local Part = v.Character[Config.Aimbot.TargetPart]
+                local Pos, OnScreen = Camera:WorldToViewportPoint(Part.Position)
+                
+                if OnScreen then
+                    local Dist = (Vector2.new(Pos.X, Pos.Y) - Center).Magnitude
+                    if Dist < Closest then
+                        -- Optimized Raycast
+                        local Ray = Ray.new(Camera.CFrame.Position, (Part.Position - Camera.CFrame.Position).Unit * 1000)
+                        local Hit = workspace:FindPartOnRayWithIgnoreList(Ray, {LocalPlayer.Character, Camera})
+                        if not Config.Aimbot.WallCheck or (Hit and Hit:IsDescendantOf(v.Character)) then
+                            Target = v
+                            Closest = Dist
+                        end
+                    end
+                end
+            end
+        end
+    end
+    return Target
+end
+
+--// Blanted ESP Component (Name, Health, Distance)
+local function CreateESP(Player)
+    local function Setup(Char)
+        local Root = Char:WaitForChild("HumanoidRootPart", 10)
+        local Hum = Char:WaitForChild("Humanoid", 10)
+        if not Root then return end
+
+        local BGui = Instance.new("BillboardGui", Root)
+        BGui.Name = "MeowVisual"
+        BGui.Size = UDim2.new(4, 0, 5.5, 0)
+        BGui.AlwaysOnTop = true
+        BGui.MaxDistance = 2000
+
+        -- Hollow Box
+        local Box = Instance.new("Frame", BGui)
+        Box.Size = UDim2.new(1, 0, 1, 0)
+        Box.BackgroundTransparency = 1
+        local S = Instance.new("UIStroke", Box)
+        S.Color = Config.Visuals.Color
+        S.Transparency = Config.Visuals.Transparency
+
+        -- Data Label (Name, Health, Dist)
+        local Info = Instance.new("TextLabel", BGui)
+        Info.Size = UDim2.new(1, 0, 0, 40)
+        Info.Position = UDim2.new(0, 0, -0.4, 0)
+        Info.BackgroundTransparency = 1
+        Info.TextColor3 = Color3.new(1, 1, 1)
+        Info.TextSize = 11
+        Info.Font = Enum.Font.Code
+        Info.TextStrokeTransparency = 0.5
+
+        task.spawn(function()
+            while BGui.Parent do
+                if Root and LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart") then
+                    local Dist = math.floor((Root.Position - LocalPlayer.Character.HumanoidRootPart.Position).Magnitude)
+                    local HP = math.floor(Hum.Health)
+                    Info.Text = string.format("%s\n%s HP | %sm", Player.Name, HP, Dist)
+                end
+                task.wait(0.2) -- Slow update for data to save FPS
+            end
+        end)
+    end
+    Player.CharacterAdded:Connect(Setup)
+    if Player.Character then Setup(Player.Character) end
+end
+
+--// Universal Combat Hook
+local mt = getrawmetatable(game)
+local old = mt.__namecall
+setreadonly(mt, false)
+mt.__namecall = newcclosure(function(self, ...)
+    local method = getnamecallmethod()
+    if Config.Aimbot.SilentAim and (method == "Raycast" or method == "FindPartOnRayWithIgnoreList") then
+        local T = GetTarget()
+        if T then return old(self, unpack({...})) end
+    end
+    return old(self, ...)
+end)
+setreadonly(mt, true)
+
+--// Aimbot Snap Loop
+RunService.RenderStepped:Connect(function()
+    if Config.Aimbot.Enabled then
+        local T = GetTarget()
+        if T then
+            Camera.CFrame = CFrame.new(Camera.CFrame.Position, T.Character[Config.Aimbot.TargetPart].Position)
+        end
+    end
+end)
+
+--// Run
+for _, v in pairs(Players:GetPlayers()) do if v ~= LocalPlayer then CreateESP(v) end end
+Players.PlayerAdded:Connect(CreateESP)
